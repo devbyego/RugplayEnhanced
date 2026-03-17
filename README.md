@@ -22,7 +22,7 @@
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) for your browser
 2. Go to [Releases](https://github.com/devbyego/rugplay-enhanced/releases/latest)
-3. Download **Rugplay Enhanced-1.20.user.js**
+3. Download **Rugplay Enhanced-1.2.0.user.js**
 4. Drag it into the Tampermonkey dashboard → click Install
 5. Navigate to [rugplay.com](https://rugplay.com)
 6. Click **Enhanced** in the left sidebar
