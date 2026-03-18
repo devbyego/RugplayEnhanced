@@ -1,18 +1,19 @@
 <div align="center">
-  
-<img src="https://raw.githubusercontent.com/devbyego/rugplay-enhanced/refs/heads/main/main/icon.svg" width="200" />
+
+<img src="https://raw.githubusercontent.com/devbyego/rugplay-enhanced/refs/heads/main/icon.svg" width="200" />
 
 # Rugplay Enhanced
-
 **The #1 Tampermonkey userscript for [Rugplay](https://rugplay.com)**
 
-[![Version](https://img.shields.io/badge/version-1.2.0-111111?style=flat-square&labelColor=111111&color=ffffff)](https://github.com/devbyego/rugplay-enhanced/releases/latest)
+[![Version](https://img.shields.io/badge/version-1.3.0-111111?style=flat-square&labelColor=111111&color=22c55e)](https://github.com/devbyego/rugplay-enhanced/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-111111?style=flat-square&labelColor=111111&color=ffffff)](./LICENSE)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-required-111111?style=flat-square&labelColor=111111&color=ffffff)](https://www.tampermonkey.net/)
 
-120 mods · Live heatmap · Coin scanner · Price alerts · Watchlist · Risk scoring · Bot detection · Session journal · P&L tracker · Export tools
+**120+ mods** · Live heatmap · Coin scanner · Price alerts · Watchlist · Risk scoring · Bot detection · Session journal · P&L tracker · Export tools
 
-100% Rugplay's own API · Zero tracking · Zero third-party servers · Free forever
+**New in 1.3.0**: Auto-Snipe Launches, Liquidity Rug Detector, Dev Wallet Tracker, Live Slippage Estimator, One-Click Max Buy/Sell
+
+**100% Rugplay's own API** · Zero tracking · Zero third-party servers · Free forever
 
 </div>
 
@@ -20,100 +21,96 @@
 
 ## Install
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) for your browser
-2. Go to [Releases](https://github.com/devbyego/rugplay-enhanced/releases/latest)
-3. Download **Rugplay Enhanced-1.2.0.user.js**
-4. Drag it into the Tampermonkey dashboard → click Install
-5. Navigate to [rugplay.com](https://rugplay.com)
-6. Click **Enhanced** in the left sidebar
+1. Install **[Tampermonkey](https://www.tampermonkey.net/)** for your browser
+2. Go to the [latest release](https://github.com/devbyego/rugplay-enhanced/releases/latest)
+3. Click **rugplay-enhanced.user.js** (or drag it into Tampermonkey)
+4. Click **Install**
+5. Go to [rugplay.com](https://rugplay.com)
+6. Click **Enhanced** in the left sidebar to open the panel
 
-**Keyboard shortcuts**
+### Keyboard Shortcuts
+| Shortcut       | Action                    |
+|----------------|---------------------------|
+| `Ctrl + Shift + E` | Toggle Enhanced panel    |
+| `Ctrl + K`     | Quick search              |
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Shift+E` | Toggle Enhanced panel |
-| `Ctrl+K` | Quick search |
+---
+
+## What's New in 1.3.0
+
+- **Auto-Snipe Launches** — Detects and reacts to brand new coin creations
+- **Liquidity Rug Detector** — Alerts when liquidity is removed from pools
+- **Dev Wallet Tracker** — Highlights when coin creators sell their own bags
+- **Live Slippage Estimator** — Real-time slippage display on coin pages
+- **One-Click Max Buy / Max Sell** — Faster trading flow
+- Significantly improved WebSocket interceptor stability
+- Cleaner mod system and better SPA navigation handling
 
 ---
 
 ## Features
 
-### Panel tabs
+### Panel Tabs
+- **Dashboard** — Live feed, market radar, heatmap, portfolio chart, sentiment bar
+- **Scanner** — Real-time new coin detection with risk scoring, gem finder, gainers/losers
+- **Watchlist** — Live prices + watchlist-only feed
+- **Alerts** — Price alerts, volume spikes, bot detection, alert history
+- **Journal** — Searchable session log of all events
+- **Reporter** — Submit and browse community rugpull reports
+- **Mods** — 120+ mods with search and category filtering
+- **Status** — Diagnostics, changelog, export/import/reset
 
-| Tab | Description |
-|---|---|
-| Dashboard | Live feed, market radar, heatmap, portfolio chart, sentiment bar |
-| Scanner | Real-time new coin detection with risk scoring, gem finder, gainers/losers |
-| Watchlist | Live prices, watchlist-only feed, quick add/remove |
-| Alerts | Price alerts, configurable thresholds, alert history, test tools |
-| Journal | Searchable session log of every event |
-| Reporter | Submit and browse community rugpull reports |
-| Mods | All 120 mods with search, category filter, all on/off |
-| vs Plus | Honest feature comparison with Rugplay Plus |
-| Status | Diagnostics, changelog, export/import/reset settings |
+### On-Page Injections
+- Risk Assessment Card (0–100 score)
+- Recent Transactions Card (live + paginated)
+- Private Coin Notes
+- Watch + History buttons on profiles
+- Community Reported badges
+- Creator sell highlighting
 
-### 120 mods across 6 categories
-
-**Interface** — Ad blocker, compact sidebar, focus mode, smooth scrolling, sticky portfolio, URL shortcuts, keyboard shortcuts, better scrollbars, and more
-
-**Trading** — Transaction card on coin pages, risk assessment card, coin notes, watchlist, P&L tracker, trade history modal on profiles, cost basis, clickable table rows, and more
-
-**Alerts** — Bot detection, volume spike alerts, whale radar, creator sell alert, new coin alert, holder drop alert, price drop alert, desktop notifications, sound alerts, and more
-
-**Privacy** — Appear offline, hide balance, blur portfolio, block analytics, strip tracking params, anonymous mode, mute creator trades, and more
-
-**Display** — Force dark mode, live heatmap, portfolio sparkline, trade timeline, sentiment bar, compact feed, session stats bar, export tools, and more
-
-**Experimental** — Slippage tracker, live bid/ask, cost basis, coin scanner, risk auto-block, and more
-
-### On-page injections
-
-- **Risk Assessment Card** — 0–100 risk score on every coin page based on age, holder count, market cap and sell pressure
-- **Recent Transactions Card** — live paginated trade history on every coin page
-- **Coin Notes** — private local notes on every coin page
-- **Watch + History buttons** — on every user profile page
-- **Reported Badge** — community warning badge on flagged coins
+### 120+ Mods Across 6 Categories
+**Interface** — Ad blocker, compact mode, focus mode, sticky portfolio, URL shortcuts, better scrollbars, etc.  
+**Trading** — Risk cards, transaction history, coin notes, P&L tracker, cost basis, clickable rows, etc.  
+**Alerts** — Bot detection, volume spikes, whale radar, creator sell alerts, new coin alerts, etc.  
+**Privacy** — Appear offline, hide balance, blur portfolio, block analytics, anonymous mode, etc.  
+**Display** — Live heatmap, portfolio sparkline, trade timeline, sentiment bar, export tools, etc.  
+**Experimental** — Slippage estimator, risk auto-block, live bid/ask, gem finder, etc.
 
 ---
 
-## Changelog
+## How It Works
 
-### v1.2.0 — The Intelligence Update
-- 120 mods, all implemented
-- New tabs: Scanner, Journal, Watchlist Feed, Gem Finder
-- Live heatmap, portfolio sparkline, sentiment bar, trade timeline
-- Session stats bar, alert history, threshold configurators
-- Export feed (JSON/CSV), watchlist, journal, settings
-- Fixed: watchlist delete buttons, sidebar poller on SPA navigation, settings cache, hash-on-load panel, missing `</style>` tag, flex layout collapse
+Rugplay Enhanced directly intercepts Rugplay’s own WebSocket (`wss://ws.rugplay.com`) and listens to the same live trade, coin creation, and pool events the site uses.
 
-### v1.1.0
-- Full panel redesign with XP design system
-- Spread tracker, slippage tracker, cost basis tracker
-- Holder drop monitor, risk change monitor
-- Report poller, trade interceptor, portfolio highlighter
-
-### v1.0.0
-- Initial release
-- Price alerts, watchlist, live feed, risk scoring, bot detection
-- Quick search, coin notes, rugpull reporter
-- Sidebar injection, keyboard shortcuts
-
----
-
-## How it works
-
-Rugplay Enhanced intercepts Rugplay's own WebSocket connection (`wss://ws.rugplay.com`) and listens to the same live trade stream the site uses. No third-party APIs, no external data sources, no tracking. Every feature runs on data Rugplay already sends to your browser.
-
-Settings are stored in Tampermonkey's GM storage — local to your browser, never uploaded anywhere.
+- No external APIs for core functionality  
+- No tracking or telemetry  
+- All settings stored locally in Tampermonkey (`GM_setValue`)  
+- The reporter feature optionally uses a minimal public API for community reports
 
 ---
 
 ## Privacy
 
-- No analytics collected
-- No username or session data sent anywhere
-- No third-party network requests except to `rugplay-enhanced-api.rugplay-enhanced.workers.dev` for the reporter feature (community-submitted rugpull reports) and update checking
-- All settings stored locally in Tampermonkey GM storage
+- Zero tracking of your activity
+- No username or session data is sent anywhere (except optional reports you choose to submit)
+- All settings and notes are stored only in your browser
+
+---
+
+## Changelog
+
+### v1.3.0 — Major Mod Expansion (Current)
+- Added 5 real mods based on the official Rugplay simulator (outpoot/rugplay)
+- Auto-Snipe Launches, Liquidity Rug Detector, Dev Wallet Tracker, Live Slippage Estimator, One-Click Max actions
+- Improved WS patching reliability and SPA navigation stability
+
+### v1.2.0 — The Intelligence Update
+- 120 mods fully implemented
+- New Scanner, Journal, Gem Finder, live heatmap, portfolio sparkline, sentiment bar
+- Export tools, alert history, better settings persistence
+
+### v1.0.0
+- Initial release with core features
 
 ---
 
@@ -129,4 +126,9 @@ Built by **devbyego**
 
 ## License
 
-MIT — do whatever you want, just don't remove the author credit.
+MIT License — Free to use, modify, and distribute (please keep author credit).
+
+---
+
+**Made for the Rugplay community.**  
+No paywalls. No tracking. Just pure edge.
