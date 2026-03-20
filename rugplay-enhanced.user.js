@@ -2,7 +2,7 @@
 // @name Rugplay Enhanced
 // @version 1.4.0
 // @icon https://raw.githubusercontent.com/devbyego/rugplay-enhanced/main/icon.png
-// @description Rugplay Enhanced 1.4.0 — fixed WS event parsing, real mods only, all features verified working. 100% Rugplay API. Zero tracking. — 100+ mods, live heatmap, portfolio chart, session journal, coin scanner, trade timeline, P&L tracker, quick copy, export tools. 100% Rugplay's own API. Zero tracking.
+// @description Rugplay Enhanced 1.4.0 — full API v2 integration: broadcasts, coin metadata, reputation, gems, platform stats, community flagging. 100% Rugplay's own API. Zero tracking.
 // @author devbyego
 // @match https://rugplay.com/*
 // @grant GM_addStyle
@@ -471,9 +471,12 @@
         state: { lastApiOkAt: 0, lastApiErrAt: 0, lastApiErr: '', lastReportOkAt: 0, lastReportErrAt: 0, lastReportErr: '' },
         async pingApi() {
             try {
-                const r = await api.get('/v1/update');
-                if (r?.status === 'success') this.state.lastApiOkAt = Date.now();
-                else throw new Error('bad_response');
+                const r = await api.get('/v1/health');
+                if (r?.status === 'ok' || r?.status === 'success') {
+                    this.state.lastApiOkAt = Date.now();
+                    // Also store API version from health check
+                    if (r.api_version && platformStats._data) platformStats._data.api_version = r.api_version;
+                } else throw new Error('bad_response');
             } catch (e) {
                 this.state.lastApiErrAt = Date.now();
                 this.state.lastApiErr = String(e?.message || e);
@@ -483,15 +486,18 @@
             if (!enhancedPanel.isVisible) return;
             const el = document.getElementById('re-diag');
             if (!el) return;
-            const wsAge = wsInterceptor.stats.lastMsgAt ? `${utils.ago(wsInterceptor.stats.lastMsgAt)}` : 'never';
+            const wsAge = wsInterceptor.stats.lastMsgAt ? utils.ago(wsInterceptor.stats.lastMsgAt) : 'never';
             const apiOk = this.state.lastApiOkAt ? utils.ago(this.state.lastApiOkAt) : 'never';
-            el.innerHTML = `
-                <div class="re-stat-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-                    <div class="re-stat"><div class="re-stat-k">WebSocket</div><div class="re-stat-v">${wsInterceptor.stats.count ? `${wsInterceptor.stats.count} msgs` : '0 msgs'}</div><div class="re-mini-sub">last: ${wsAge}</div></div>
-                    <div class="re-stat"><div class="re-stat-k">Enhanced API</div><div class="re-stat-v">${apiOk}</div><div class="re-mini-sub">${this.state.lastApiErrAt ? `err: ${utils.ago(this.state.lastApiErrAt)}${this.state.lastApiErr ? ` (${this.state.lastApiErr})` : ''}` : ''}</div></div>
-                    <div class="re-stat"><div class="re-stat-k">Reports</div><div class="re-stat-v">${this.state.lastReportOkAt ? utils.ago(this.state.lastReportOkAt) : '—'}</div><div class="re-mini-sub">${this.state.lastReportErrAt ? `err: ${utils.ago(this.state.lastReportErrAt)}${this.state.lastReportErr ? ` (${this.state.lastReportErr})` : ''}` : ''}</div></div>
-                </div>
-            `;
+            const apiV = (platformStats._data && platformStats._data.api_version) || '—';
+            const coinsMeta = Object.keys(coinMetadataCache._data).length;
+            const gemsN = gemsCache._gems.length;
+            el.innerHTML = '<div style="display:flex;flex-direction:column;gap:0">'
+                + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="' + (wsInterceptor.stats.count > 0 ? 'xp-dot-ok' : 'xp-dot-idle') + '"></span>WebSocket</span><span class="xp-diag-v">' + wsInterceptor.stats.count + ' msgs · last ' + wsAge + '</span></div>'
+                + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="' + (this.state.lastApiOkAt && !this.state.lastApiErrAt ? 'xp-dot-ok' : this.state.lastApiErrAt ? 'xp-dot-err' : 'xp-dot-idle') + '"></span>Enhanced API v' + apiV + '</span><span class="xp-diag-v">' + apiOk + (this.state.lastApiErr ? ' · ' + this.state.lastApiErr : '') + '</span></div>'
+                + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Coin Metadata</span><span class="xp-diag-v">' + coinsMeta + ' coins cached</span></div>'
+                + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>API Gems</span><span class="xp-diag-v">' + gemsN + ' verified gems</span></div>'
+                + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="' + (this.state.lastReportOkAt ? 'xp-dot-ok' : 'xp-dot-idle') + '"></span>Reporter</span><span class="xp-diag-v">' + (this.state.lastReportOkAt ? utils.ago(this.state.lastReportOkAt) : '—') + '</span></div>'
+                + '</div>';
         },
     };
     const notifications = {
@@ -993,8 +999,9 @@
                 const label = risk >= 70 ? 'HIGH' : risk >= 40 ? 'MEDIUM' : 'LOW';
                 const creatorUsername = getVal(coin.creatorUsername) ?? getVal(coin.creator) ?? null;
                 const result = { sym, risk, fac, label, ts: Date.now(), creatorUsername: typeof creatorUsername === 'string' ? creatorUsername : null };
-                this.cache[sym] = result;
-                return result;
+                // Enrich with API coin metadata overrides
+                const enriched = coinMetadataCache.enrich(sym, result);
+                this.cache[sym] = enriched; return enriched;
             } catch { return null; }
         },
     };
@@ -1174,8 +1181,18 @@
             const minWhale = parseFloat(document.getElementById('re-whale-min')?.value || '250') || 250;
             const whales = trades.filter(t => (+t.val || 0) >= minWhale).slice(0, 25).sort((a, b) => (+b.val || 0) - (+a.val || 0)).slice(0, 12);
             whaleEl.innerHTML = whales.length
-                ? whales.map(t=>`<a class="xp-mini-row" href="/coin/${t.sym}"><span class="xp-mini-sym">${t.sym}</span><span class="xp-mini-sub">${t.usr} · ${t.type} · ${utils.usd(t.val)} · ${utils.ago(t.ts)}</span><span class="${t.type==='SELL'?'xp-t-sell':'xp-t-buy'}">${t.type}</span></a>`).join('')
-                :`<div class="xp-empty">No whales over ${utils.usd(minWhale)}.</div>`;
+                ? whales.map(function(t) {
+                    const rep = reputationCache._cache[t.usr ? t.usr.toLowerCase() : ''];
+                    const repBadge = rep && rep.score < 40 ? ' <span style="font-size:9px;color:var(--re-red);font-weight:700">⚠ ' + rep.score + '</span>' : '';
+                    return '<a class="xp-mini-row" href="/coin/' + t.sym + '">'
+                        + '<span class="xp-mini-sym">' + t.sym + '</span>'
+                        + '<span class="xp-mini-sub">' + t.usr + repBadge + ' · ' + t.type + ' · ' + utils.usd(t.val) + ' · ' + utils.ago(t.ts) + '</span>'
+                        + '<span class="' + (t.type==='SELL' ? 'xp-t-sell' : 'xp-t-buy') + '">' + t.type + '</span></a>';
+                }).join('')
+                : '<div class="xp-empty">No whales over ' + utils.usd(minWhale) + '.</div>';
+            // Bulk fetch rep for whale traders
+            const whaleUsers = whales.map(function(t) { return t.usr; }).filter(Boolean);
+            if (whaleUsers.length) reputationCache.bulk(whaleUsers).catch(function() {});
             const totalVol = trades.reduce((s, t) => s + (+t.val || 0), 0);
             const buys = trades.filter(t => t.type === 'BUY').length;
             const sells = trades.filter(t => t.type === 'SELL').length;
@@ -1324,6 +1341,7 @@
             const s = store.settings();
             const tasks = [];
             tasks.push(this._watchBtn(sym));
+            tasks.push(this._flagBtn(sym));
             if (s.riskScore && s.riskCard) tasks.push(this._riskCard(sym));
             if (s.reportedBadge) tasks.push(this._reportedBadge(sym));
             if (s.txCard) tasks.push(this._txCard(sym));
@@ -1365,6 +1383,40 @@
                 const created = getVal(coin.createdAt) ?? null;
                 const h1 = document.querySelector('main h1, main .text-2xl.font-bold, main .text-3xl.font-bold');
                 if (!h1) return;
+                // API coin metadata badges
+                const apiMeta = coinMetadataCache.get(sym);
+                if (apiMeta && !document.getElementById('re-api-badges')) {
+                    const h1ref = document.querySelector('main h1, main .text-2xl.font-bold');
+                    if (h1ref) {
+                        const wrap = document.createElement('div');
+                        wrap.id = 're-api-badges';
+                        wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px';
+                        if (apiMeta.is_scam) {
+                            const el = document.createElement('span');
+                            el.style.cssText = 'font-size:11px;font-weight:800;padding:3px 9px;border-radius:4px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);color:#ef4444;letter-spacing:.03em;display:inline-block;width:fit-content';
+                            el.textContent = '💀 CONFIRMED SCAM — Community Verified';
+                            wrap.appendChild(el);
+                        } else if (apiMeta.is_verified) {
+                            const el = document.createElement('span');
+                            el.style.cssText = 'font-size:11px;font-weight:800;padding:3px 9px;border-radius:4px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:#22c55e;display:inline-block;width:fit-content';
+                            el.textContent = '✅ Community Verified — Low Risk';
+                            wrap.appendChild(el);
+                        }
+                        if (apiMeta.flags && apiMeta.flags.length) {
+                            const fl = document.createElement('div');
+                            fl.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap';
+                            fl.innerHTML = apiMeta.flags.map(function(f) { return '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);color:#f59e0b">' + f + '</span>'; }).join('');
+                            wrap.appendChild(fl);
+                        }
+                        if (apiMeta.note) {
+                            const el = document.createElement('div');
+                            el.style.cssText = 'padding:6px 10px;background:rgba(10,132,255,.08);border:1px solid rgba(10,132,255,.2);border-radius:6px;font-size:11px;color:#60a5fa;font-weight:500';
+                            el.textContent = 'ℹ️ ' + apiMeta.note;
+                            wrap.appendChild(el);
+                        }
+                        if (wrap.children.length) h1ref.parentElement.appendChild(wrap);
+                    }
+                }
                 // showCoinCreator
                 if (s.showCoinCreator && !document.getElementById('re-coin-creator')) {
                     const cu = getVal(coin.creatorUsername) ?? getVal(coin.creator) ?? null;
@@ -1464,6 +1516,37 @@
         },
         _priceDropRef: null,
         _priceDropWired: false,
+        async _flagBtn(sym) {
+            if (document.getElementById('re-flag-btn')) return;
+            await utils.sleep(1500);
+            if (!utils.isCoinPage() || utils.getCoinSymbol() !== sym) return;
+            const hdr = document.querySelector('main h1') ? document.querySelector('main h1').parentElement : null;
+            if (!hdr) return;
+            const btn = document.createElement('button');
+            btn.id = 're-flag-btn';
+            btn.style.cssText = 'font-size:11px;font-weight:600;padding:3px 10px;border-radius:5px;border:1px solid rgba(239,68,68,.25);background:rgba(239,68,68,.07);color:#ef4444;cursor:pointer;margin-top:6px;transition:all .15s;display:inline-flex;align-items:center;gap:4px';
+            btn.innerHTML = '🚩 Flag Coin';
+            btn.addEventListener('mouseover', function() { btn.style.background = 'rgba(239,68,68,.14)'; });
+            btn.addEventListener('mouseout', function() { btn.style.background = 'rgba(239,68,68,.07)'; });
+            btn.addEventListener('click', async function() {
+                const reasons = ['rug', 'bot', 'wash-trade', 'dev-dump', 'honeypot', 'suspicious'];
+                const choice = prompt('Flag ' + sym + ' as:\n' + reasons.map(function(r,i) { return (i+1) + '. ' + r; }).join('\n') + '\n\nEnter number (1-6):');
+                if (!choice) return;
+                const idx = parseInt(choice) - 1;
+                if (idx < 0 || idx >= reasons.length) { notifier.err('Invalid choice'); return; }
+                try {
+                    const r = await api.post('/v1/coins/flag', { symbol: sym, reason: reasons[idx] });
+                    if (r.status === 'success') {
+                        const cnt = r.data && r.data.count ? r.data.count : 1;
+                        notifier.ok('Flagged ' + sym + ' as ' + reasons[idx] + ' (' + cnt + ' flags total)');
+                        btn.textContent = '🚩 Flagged';
+                        btn.disabled = true;
+                        btn.style.opacity = '.5';
+                    } else { notifier.err(r.message || 'Failed to flag'); }
+                } catch(e) { notifier.err('Failed to flag coin'); }
+            });
+            hdr.appendChild(btn);
+        },
         async _watchBtn(sym) {
             if (document.getElementById(CONFIG.ids.watchBtn)) return;
             const key = `wb:${sym}`;
@@ -1658,6 +1741,18 @@
                 cont.appendChild(wlBtn);
             }
             hdr.appendChild(cont);
+            reputationCache.get(pu).then(function(rep) {
+                if (!rep || document.getElementById('re-rep-badge')) return;
+                const el = document.createElement('div');
+                el.id = 're-rep-badge';
+                const col = rep.score >= 80 ? '#22c55e' : rep.score >= 50 ? '#f59e0b' : '#ef4444';
+                const bg = rep.score >= 80 ? 'rgba(34,197,94,.1)' : rep.score >= 50 ? 'rgba(245,158,11,.1)' : 'rgba(239,68,68,.1)';
+                const border = rep.score >= 80 ? 'rgba(34,197,94,.25)' : rep.score >= 50 ? 'rgba(245,158,11,.25)' : 'rgba(239,68,68,.25)';
+                el.style.cssText = 'margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;background:' + bg + ';border:1px solid ' + border + ';color:' + col;
+                const flags = rep.flags && rep.flags.length ? ' · ' + rep.flags.slice(0, 2).join(', ') : '';
+                el.textContent = 'Enhanced Rep: ' + rep.score + '/100 — ' + rep.label + flags;
+                hdr.appendChild(el);
+            }).catch(function() {});
         },
         async _showHistory(user, pg = 1) {
             let ov = document.getElementById(CONFIG.ids.historyModalOverlay);
@@ -1734,6 +1829,7 @@
             notifications.apply();
             adBlocker.apply();
             liveFeed.open = true; liveFeed.render(); liveFeed.startTsTimer();
+            analytics.trackPanelOpen();
             dashboard.render();
             settingsEngine.applyAll();
             ['re-stat-trades','xp-stat-trades','xp-stat-trades-2'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=liveFeed.trades.length;});
@@ -2412,6 +2508,14 @@
           <div class="xp-divider"></div>
           <div class="xp-section-label">Gem Finder</div>
           <div class="xp-mini-list" id="xp-gems"><div class="xp-empty" style="padding:10px 0">No gems yet</div></div>
+          <div class="xp-divider"></div>
+          <div class="xp-section-label">Nominate a Gem</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="xp-gem-sym" class="xp-input" placeholder="Symbol e.g. GEM" style="flex:1;height:28px;font-size:11px" />
+            <button class="xp-btn success" id="xp-gem-nominate" style="height:28px;font-size:11px;flex-shrink:0">Nominate</button>
+          </div>
+          <input id="xp-gem-reason" class="xp-input" placeholder="Why is this a gem? (optional)" style="margin-bottom:4px;font-size:11px;height:28px" />
+          <div id="xp-gem-msg" style="font-size:11px;min-height:14px;font-weight:600"></div>
         </div>
       </div>
     </div>
@@ -2601,13 +2705,31 @@
           <div><div class="xp-card-title">🏆 Global Leaderboard</div><div class="xp-card-sub">Top traders by portfolio value</div></div>
           <button class="xp-btn ghost" id="xp-lb-refresh" style="height:26px;font-size:11px">Refresh</button>
         </div>
-        <div id="xp-lb-body" style="max-height:70vh;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
+        <div id="xp-lb-body" style="max-height:50vh;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
+      </div>
+      <div class="xp-card">
+        <div class="xp-card-hd">
+          <div><div class="xp-card-title">👁 Trending Watchlist Coins</div><div class="xp-card-sub">Most watched across all Enhanced users</div></div>
+          <button class="xp-btn ghost" id="xp-wl-pop-refresh" style="height:26px;font-size:11px">Refresh</button>
+        </div>
+        <div id="xp-wl-popular" class="xp-mini-list" style="padding:8px 9px;max-height:220px;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
       </div>
     </div>
     <div class="xp-col">
       <div class="xp-card">
         <div class="xp-card-hd"><div><div class="xp-card-title">🐋 Whale Leaderboard</div><div class="xp-card-sub">Biggest single trades this session</div></div></div>
-        <div id="xp-whale-lb" style="max-height:320px;overflow-y:auto"><div class="xp-empty">No whale trades seen yet</div></div>
+        <div id="xp-whale-lb" style="max-height:220px;overflow-y:auto"><div class="xp-empty">No whale trades seen yet</div></div>
+      </div>
+      <div class="xp-card">
+        <div class="xp-card-hd">
+          <div><div class="xp-card-title">☠️ Danger Zone</div><div class="xp-card-sub">Most reported users — community flagged</div></div>
+          <button class="xp-btn ghost" id="xp-danger-refresh" style="height:26px;font-size:11px">Refresh</button>
+        </div>
+        <div id="xp-danger-zone" style="max-height:220px;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
+      </div>
+      <div class="xp-card">
+        <div class="xp-card-hd"><div><div class="xp-card-title">🔥 Most Reported Coins</div><div class="xp-card-sub">Community flagged coins ranked by reports</div></div></div>
+        <div id="xp-top-reported-coins" class="xp-mini-list" style="padding:8px 9px;max-height:220px;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
       </div>
     </div>
   </div>
@@ -2632,9 +2754,18 @@
     </div>
     <div class="xp-col">
       <div class="xp-card">
-        <div class="xp-card-hd"><div><div class="xp-card-title">Community Reports</div><div class="xp-card-sub">Submitted by Enhanced users</div></div></div>
-        <div id="re-rp-list" style="max-height:420px;overflow-y:auto;padding:10px 13px"></div>
+        <div class="xp-card-hd">
+          <div><div class="xp-card-title">Community Reports</div><div class="xp-card-sub">Submitted by Enhanced users</div></div>
+          <div class="xp-btn-row">
+            <select id="xp-rp-sort" class="xp-select" style="width:100px;height:26px;font-size:11px"><option value="newest">Newest</option><option value="top">Top voted</option><option value="controversial">Controversial</option></select>
+          </div>
+        </div>
+        <div id="re-rp-list" style="max-height:360px;overflow-y:auto;padding:10px 13px"></div>
         <div id="re-rp-pag" class="xp-pag" style="display:none"></div>
+      </div>
+      <div class="xp-card">
+        <div class="xp-card-hd"><div><div class="xp-card-title">🚨 Flagged Coins</div><div class="xp-card-sub">Community-flagged via Enhanced</div></div></div>
+        <div id="xp-flagged-coins" class="xp-mini-list" style="padding:8px 9px;max-height:200px;overflow-y:auto"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
       </div>
     </div>
   </div>
@@ -2745,6 +2876,10 @@
         </div>
       </div>
       <div class="xp-card">
+        <div class="xp-card-hd"><div><div class="xp-card-title">🏷 Tag Styles</div><div class="xp-card-sub">Available user tag presets from Enhanced API</div></div></div>
+        <div id="xp-tag-styles-list" class="xp-card-body"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
+      </div>
+      <div class="xp-card">
         <div class="xp-card-hd"><div><div class="xp-card-title">🚩 Blocked / Trusted</div></div></div>
         <div class="xp-card-body">
           <div class="xp-form-row" style="margin-bottom:8px"><div class="xp-label">Blocked Users (comma-separated)</div><input class="xp-input" id="xp-blocked-users" value="${s.blockedUsers||''}" placeholder="user1,user2" /></div>
@@ -2761,6 +2896,10 @@
 <div data-re-section="status">
   <div class="xp-2col">
     <div class="xp-col">
+      <div class="xp-card">
+        <div class="xp-card-hd"><div><div class="xp-card-title">🌐 Platform Stats</div><div class="xp-card-sub">Live from Enhanced API</div></div></div>
+        <div class="xp-card-body" id="re-platform-stats"><div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div></div>
+      </div>
       <div class="xp-card">
         <div class="xp-card-hd"><div><div class="xp-card-title">🟢 System Diagnostics</div></div></div>
         <div class="xp-card-body" id="re-diag">
@@ -3066,11 +3205,14 @@
                 const mkRow = (c, up) => `<a class="xp-mini-row" href="/coin/${c.sym}"><span class="xp-mini-sym xp-copy-sym" data-sym="${c.sym}">${c.sym}</span><span class="xp-mini-sub">${utils.usd(c.last)}</span><span class="${up?'xp-t-buy':'xp-t-sell'}">${up?'+':''}${c.pct.toFixed(2)}%</span></a>`;
                 ['xp-gainers','xp-gainers-list'].forEach(id => { const gEl = document.getElementById(id); if (gEl) gEl.innerHTML = gainers.length ? gainers.map(c=>mkRow(c,true)).join('') : '<div class="xp-empty" style="padding:12px 0">No data yet</div>'; });
                 ['xp-losers','xp-losers-list'].forEach(id => { const lEl = document.getElementById(id); if (lEl) lEl.innerHTML = losers.filter(c=>c.pct<0).length ? losers.filter(c=>c.pct<0).map(c=>mkRow(c,false)).join('') : '<div class="xp-empty" style="padding:12px 0">No data yet</div>'; });
+                const _apiGemSyms = gemsCache.symbols();
+                const _apiGems = gemsCache._gems.slice(0, 5).map(function(g) { return { sym: g.symbol, vol: 0, n: 0, risk: g.risk_score || 0, _api: true, reason: g.reason || '' }; });
                 const gems = Object.values(window._reScanCoins||{}).filter(c => {
                     const risk = c.risk ?? 100;
                     return risk <= (store.settings().gemMaxRisk ?? 40) && c.n >= 3;
                 }).sort((a,b) => b.vol - a.vol).slice(0, 5);
-                ['xp-gems','xp-gems-list'].forEach(id => { const gmEl = document.getElementById(id); if (!gmEl) return; gmEl.innerHTML = gems.length ? gems.map(c => `<a class="xp-mini-row" href="/coin/${c.sym}"><span class="xp-mini-sym xp-copy-sym" data-sym="${c.sym}">💎 ${c.sym}</span><span class="xp-mini-sub">${utils.usd(c.vol)} · ${c.n} trades</span><span class="xp-sc-risk low">LOW</span></a>`).join('') : '<div class="xp-empty" style="padding:12px 0">No gems found yet</div>'; });
+                const allGems = [..._apiGems, ...gems.filter(function(c) { return !_apiGemSyms.has(c.sym); })].slice(0, 8);
+                ['xp-gems','xp-gems-list'].forEach(function(id) { const gmEl = document.getElementById(id); if (!gmEl) return; gmEl.innerHTML = allGems.length ? allGems.map(function(c) { return '<a class="xp-mini-row" href="/coin/' + c.sym + '"><span class="xp-mini-sym xp-copy-sym" data-sym="' + c.sym + '">' + (c._api ? '💎' : '🔭') + ' ' + c.sym + (c._api ? ' <span style="font-size:8px;color:var(--re-t3)">verified</span>' : '') + '</span><span class="xp-mini-sub">' + (c._api ? (c.reason || 'API gem') : utils.usd(c.vol) + ' · ' + c.n + ' trades') + '</span><span class="xp-sc-risk low">LOW</span></a>'; }).join('') : '<div class="xp-empty" style="padding:12px 0">No gems found yet</div>'; });
             };
             if (!window._reCmpCoins) window._reCmpCoins = [];
             const renderCmpGrid = function() {
@@ -3181,6 +3323,29 @@
                 if (t==='scanner') { renderScanner(); renderGainersLosers(); }
                 if (t==='journal') renderJournal();
                 if (t==='snipe') renderSnipeTargets();
+                if (t==='leaderboard') {
+                    if (typeof loadLeaderboard === 'function') loadLeaderboard();
+                    if (typeof loadWlPopular === 'function') loadWlPopular();
+                    if (typeof loadDangerZone === 'function') loadDangerZone();
+                    if (typeof loadTopReportedCoins === 'function') loadTopReportedCoins();
+                }
+                if (t==='reporter') {
+                    try { enhancedPanel._loadReports(1); } catch {}
+                    if (typeof loadFlaggedCoins === 'function') loadFlaggedCoins();
+                }
+                if (t==='status') {
+                    diagnostics.pingApi().finally(function() { diagnostics.render(); });
+                    platformStats.load(true).then(function() {}).catch(function() {});
+                }
+                if (t==='settings') {
+                    api.get('/v1/tags/styles').then(function(r) {
+                        const el = document.getElementById('xp-tag-styles-list'); if (!el) return;
+                        if (r.status !== 'success' || !r.data) { el.innerHTML = '<div class="xp-empty">Could not load</div>'; return; }
+                        el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:5px;padding:4px 0">'
+                            + r.data.map(function(s) { return '<span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:4px;background:' + s.bg + ';color:' + s.text + '">' + s.label + '</span>'; }).join('')
+                            + '</div>';
+                    }).catch(function() {});
+                }
             };
             document.querySelectorAll('[data-re-tab]').forEach(b => b.addEventListener('click', () => applyTab(b.getAttribute('data-re-tab'))));
 
@@ -3589,6 +3754,104 @@
             };
             document.getElementById('xp-bets-refresh')?.addEventListener('click', loadBets);
             document.getElementById('xp-lb-refresh')?.addEventListener('click', loadLeaderboard);
+
+            // ── Watchlist popular coins ───────────────────────────────────
+            const loadWlPopular = function() {
+                const el = document.getElementById('xp-wl-popular'); if (!el) return;
+                el.innerHTML = '<div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div>';
+                api.get('/v1/stats/watchlist/popular').then(function(r) {
+                    if (r.status !== 'success' || !r.data || !r.data.length) { el.innerHTML = '<div class="xp-empty">No data yet</div>'; return; }
+                    el.innerHTML = r.data.map(function(c, i) {
+                        return '<a class="xp-mini-row" href="/coin/' + c.symbol + '">'
+                            + '<span class="xp-mini-sym xp-copy-sym" data-sym="' + c.symbol + '">'
+                            + '<span style="font-size:9px;color:var(--re-amber);margin-right:3px;font-family:var(--re-mono)">#' + (i+1) + '</span>'
+                            + c.symbol + '</span>'
+                            + '<span class="xp-mini-sub">' + c.watchers + ' Enhanced users watching</span>'
+                            + '<span class="xp-t-buy">👁 ' + c.watchers + '</span></a>';
+                    }).join('');
+                }).catch(function() { el.innerHTML = '<div class="xp-empty">Failed to load</div>'; });
+            };
+            document.getElementById('xp-wl-pop-refresh')?.addEventListener('click', loadWlPopular);
+            loadWlPopular();
+
+            // ── Danger zone ──────────────────────────────────────────────
+            const loadDangerZone = function() {
+                const el = document.getElementById('xp-danger-zone'); if (!el) return;
+                el.innerHTML = '<div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div>';
+                api.get('/v1/reputation/danger-zone?limit=10').then(function(r) {
+                    if (r.status !== 'success' || !r.data || !r.data.length) { el.innerHTML = '<div class="xp-empty">No data yet</div>'; return; }
+                    el.innerHTML = r.data.map(function(u) {
+                        const score = Math.max(0, 100 - (u.report_count || 0) * 15);
+                        const col = score < 25 ? 'var(--re-red)' : score < 50 ? 'var(--re-amber)' : 'var(--re-t2)';
+                        return '<a class="xp-mini-row" href="/user/' + u.username + '" style="grid-template-columns:1fr auto auto">'
+                            + '<span class="xp-mini-sym">' + u.username + (u.tag_label ? ' <span style="font-size:9px;color:var(--re-t3)">(' + u.tag_label + ')</span>' : '') + '</span>'
+                            + '<span class="xp-mini-sub">' + (u.report_count || 0) + ' reports</span>'
+                            + '<span style="font-size:11px;font-weight:800;font-family:var(--re-mono);color:' + col + '">' + score + '/100</span></a>';
+                    }).join('');
+                }).catch(function() { el.innerHTML = '<div class="xp-empty">Failed to load</div>'; });
+            };
+            document.getElementById('xp-danger-refresh')?.addEventListener('click', loadDangerZone);
+            loadDangerZone();
+
+            // ── Top reported coins ───────────────────────────────────────
+            const loadTopReportedCoins = function() {
+                const el = document.getElementById('xp-top-reported-coins'); if (!el) return;
+                el.innerHTML = '<div class="xp-loading"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="xp-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading…</div>';
+                api.get('/v1/reports/top-coins?limit=10').then(function(r) {
+                    if (r.status !== 'success' || !r.data || !r.data.length) { el.innerHTML = '<div class="xp-empty">No reports yet</div>'; return; }
+                    el.innerHTML = r.data.map(function(c, i) {
+                        return '<a class="xp-mini-row" href="/coin/' + c.coin_symbol + '">'
+                            + '<span class="xp-mini-sym xp-copy-sym" data-sym="' + c.coin_symbol + '">'
+                            + '<span style="font-size:9px;color:var(--re-t3);margin-right:3px">#' + (i+1) + '</span>'
+                            + c.coin_symbol + '</span>'
+                            + '<span class="xp-mini-sub">' + c.report_count + ' report' + (c.report_count !== 1 ? 's' : '') + '</span>'
+                            + '<span class="xp-t-sell">🚩 ' + c.report_count + '</span></a>';
+                    }).join('');
+                }).catch(function() { el.innerHTML = '<div class="xp-empty">Failed to load</div>'; });
+            };
+            loadTopReportedCoins();
+
+            // ── Flagged coins from /v1/coins/flags/summary ───────────────
+            const loadFlaggedCoins = function() {
+                const el = document.getElementById('xp-flagged-coins'); if (!el) return;
+                api.get('/v1/coins/flags/summary').then(function(r) {
+                    if (r.status !== 'success' || !r.data || !r.data.length) { el.innerHTML = '<div class="xp-empty">No flagged coins yet</div>'; return; }
+                    el.innerHTML = r.data.map(function(c) {
+                        return '<a class="xp-mini-row" href="/coin/' + c.symbol + '">'
+                            + '<span class="xp-mini-sym xp-copy-sym" data-sym="' + c.symbol + '">' + c.symbol + '</span>'
+                            + '<span class="xp-mini-sub">' + (c.flags || []).join(', ') + '</span>'
+                            + '<span class="xp-t-sell">' + (c.flags || []).length + ' flags</span></a>';
+                    }).join('');
+                }).catch(function() {});
+            };
+            loadFlaggedCoins();
+
+            // ── Gem nomination ───────────────────────────────────────────
+            document.getElementById('xp-gem-nominate')?.addEventListener('click', async function() {
+                const sym = (document.getElementById('xp-gem-sym')?.value || '').trim().toUpperCase();
+                const reason = (document.getElementById('xp-gem-reason')?.value || '').trim();
+                const msg = document.getElementById('xp-gem-msg');
+                if (!sym) { if (msg) { msg.textContent = 'Enter a symbol'; msg.style.color = 'var(--re-red)'; } return; }
+                if (msg) { msg.textContent = 'Submitting…'; msg.style.color = 'var(--re-t2)'; }
+                try {
+                    const r = await api.post('/v1/gems/submit', { symbol: sym, reason });
+                    if (r.status === 'success') {
+                        if (msg) { msg.textContent = r.data && r.data.action === 'voted' ? sym + ' already nominated — vote recorded!' : sym + ' nominated! Pending review.'; msg.style.color = 'var(--re-green)'; }
+                        document.getElementById('xp-gem-sym').value = '';
+                        document.getElementById('xp-gem-reason').value = '';
+                        // Force reload gems
+                        gemsCache.load(true).catch(function() {});
+                    } else {
+                        if (msg) { msg.textContent = r.message || 'Failed'; msg.style.color = 'var(--re-red)'; }
+                    }
+                } catch(e) { if (msg) { msg.textContent = 'Error submitting'; msg.style.color = 'var(--re-red)'; } }
+            });
+
+            // ── Report sort control ──────────────────────────────────────
+            document.getElementById('xp-rp-sort')?.addEventListener('change', function(e) {
+                // _loadReports uses the sort value from this select
+                enhancedPanel._loadReports(1);
+            });
             document.getElementById('xp-bug-submit')?.addEventListener('click', () => {
                 const desc = document.getElementById('xp-bug-desc')?.value.trim() || '';
                 const body = `**Rugplay Enhanced v${GM_info.script.version}**\n\n**Description:**\n${desc}\n\n**Browser:** ${navigator.userAgent.split(' ').slice(-2).join(' ')}`;
@@ -3605,6 +3868,24 @@
             renderSparkline();
             diagnostics.pingApi().finally(() => diagnostics.render());
             diagnostics.render();
+            Promise.all([
+                platformStats.load(),
+                api.get('/v1/reports/summary'),
+            ]).then(function(results) {
+                const stats = results[0];
+                const rsum = results[1] && results[1].status === 'success' ? results[1].data : null;
+                const el = document.getElementById('re-platform-stats'); if (!el) return;
+                el.innerHTML = '<div style="display:flex;flex-direction:column;gap:0">'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Reports (approved/pending)</span><span class="xp-diag-v">' + (rsum ? rsum.approved + ' / ' + rsum.pending : (stats && stats.reports ? stats.reports.approved : '—')) + '</span></div>'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Reports last 24h</span><span class="xp-diag-v">' + (rsum ? rsum.last_24h : '—') + '</span></div>'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Creator Tags</span><span class="xp-diag-v">' + (stats ? stats.tags : '—') + '</span></div>'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Verified Gems</span><span class="xp-diag-v">' + (stats ? stats.gems : '—') + '</span></div>'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Active Today</span><span class="xp-diag-v">' + (stats && stats.active_today != null ? stats.active_today + ' users' : '—') + '</span></div>'
+                    + '<div class="xp-diag-row"><span class="xp-diag-l"><span class="xp-dot-ok"></span>Total Installs</span><span class="xp-diag-v">' + (stats && stats.total_installs != null ? stats.total_installs : '—') + '</span></div>'
+                    + '</div>';
+            }).catch(function() {});
+            coinMetadataCache.load(true).catch(function() {});
+            gemsCache.load(true).catch(function() {});
             this._panelTimer = setInterval(() => {
                 if (!this.isVisible) return;
                 renderHeatmap();
@@ -3627,11 +3908,12 @@
             const list = document.getElementById('re-rp-list'); if (!list) return;
             list.innerHTML = `<div class="flex items-center justify-center p-6 text-muted-foreground gap-2">${ICONS.loading}<span class="text-sm animate-pulse">Loading...</span></div>`;
             try {
-                const r = await api.get(`/v1/reports?page=${pg}&limit=8`); if (r.status !== 'success') throw 0;
+                const sortVal = document.getElementById('xp-rp-sort')?.value || 'newest';
+                const r = await api.get('/v1/reports?page=' + pg + '&limit=8&sort=' + sortVal); if (r.status !== 'success') throw 0;
                 const rpts = r.data?.reports || [];
                 if (!rpts.length) { list.innerHTML = '<p class="text-muted-foreground text-sm text-center p-6">No reports yet.</p>'; return; }
                 list.innerHTML = rpts.map(rp=>`<div class="xp-rp-row" data-id="${rp.id}"><div class="xp-rp-hd"><span class="xp-rp-user">${rp.reported_username}</span><span class="xp-rp-coin">*${rp.coin_symbol}</span><span class="xp-rp-time">${utils.ago(rp.created_at)}</span></div><p class="xp-rp-body">${rp.description}</p><div class="xp-rp-foot"><button class="xp-vote up re-vote" data-id="${rp.id}" data-t="upvote">▲ ${rp.upvotes||0}</button><button class="xp-vote dn re-vote" data-id="${rp.id}" data-t="downvote">▼ ${rp.downvotes||0}</button></div></div>`).join('');
-                list.querySelectorAll('.re-vote').forEach(b => b.onclick = async () => { try { await api.post('/v1/reports/vote', { id: b.dataset.id, type: b.dataset.t }); notifier.ok('Vote recorded'); this._loadReports(pg); } catch { notifier.err('Already voted or failed'); } });
+                list.querySelectorAll('.re-vote').forEach(b => b.onclick = async () => { try { await api.post('/v1/reports/vote', { id: b.dataset.id, vote: b.dataset.t === 'upvote' ? 'up' : 'down' }); notifier.ok('Vote recorded'); this._loadReports(pg); } catch { notifier.err('Already voted or failed'); } });
                 const pag = document.getElementById('re-rp-pag'); const p = r.data?.pagination;
                 if (pag && p && p.total_pages > 1) { pag.innerHTML = ''; const mkBtn = (lbl, page, dis = false) => { const b = document.createElement('button'); b.textContent = lbl; b.className = 'inline-flex items-center justify-center text-sm font-medium h-9 px-3 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors'; if (dis) { b.setAttribute('disabled', ''); b.style.opacity = '.4'; } else b.onclick = () => this._loadReports(page); return b; }; pag.classList.add('flex', 'justify-center', 'items-center', 'gap-2'); pag.appendChild(mkBtn('«', p.current_page - 1, p.current_page === 1)); const inf = document.createElement('span'); inf.className = 'text-sm text-muted-foreground'; inf.textContent = `${p.current_page} / ${p.total_pages}`; pag.appendChild(inf); pag.appendChild(mkBtn('»', p.current_page + 1, p.current_page >= p.total_pages)); }
                 diagnostics.state.lastReportOkAt = Date.now();
@@ -3758,6 +4040,10 @@
             const sk = 're:ls'; if (Date.now() - GM_getValue(sk, 0) < 14400000) return; GM_setValue(sk, Date.now());
             try { await api.post('/v1/analytics', { event: 'active_session', version: GM_info.script.version }); } catch {}
             const ik = 're:inst'; if (!GM_getValue(ik, false)) { try { await api.post('/v1/analytics', { event: 'install', version: GM_info.script.version }); } catch {} GM_setValue(ik, true); }
+        },
+        trackPanelOpen() {
+            const k = 're:ana:po'; if (Date.now() - GM_getValue(k, 0) < 300000) return; GM_setValue(k, Date.now());
+            api.post('/v1/analytics', { event: 'panel_open', version: GM_info.script.version }).catch(function() {});
         },
     };
     GM_addStyle(`
@@ -4144,6 +4430,158 @@
         const type = (d.data?.type || 'BUY').toUpperCase();
         if (sym) momentum.update(sym, val, type);
     });
+
+    // ════════════════════════════════════════════════════════════
+    // API v2.0 — NEW SYSTEMS
+    // ════════════════════════════════════════════════════════════
+
+    // Broadcast poller — polls /v1/broadcast every 5 min
+    const broadcastPoller = {
+        _lastSeen: store.get('re:bc:last', 0),
+        _shown: new Set(store.get('re:bc:seen', [])),
+        async poll() {
+            try {
+                const r = await api.get('/v1/broadcast?since=' + this._lastSeen);
+                if (r.status !== 'success' || !Array.isArray(r.data)) return;
+                for (const bc of r.data) {
+                    if (this._shown.has(bc.id)) continue;
+                    this._shown.add(bc.id);
+                    if (this._lastSeen < bc.created_at) this._lastSeen = bc.created_at;
+                    const typeMap = { rug_alert:'error', warning:'warning', error:'error', success:'success', update:'info', maintenance:'warning', info:'info' };
+                    notifier.show({
+                        title: bc.title,
+                        description: bc.message,
+                        type: typeMap[bc.type] || 'info',
+                        duration: bc.severity === 'critical' ? 0 : bc.severity === 'high' ? 15000 : 8000,
+                        actions: bc.action_label && bc.action_url ? [{ label: bc.action_label, onClick: () => { if (bc.action_url.startsWith('/')) location.href = bc.action_url; else window.open(bc.action_url, '_blank'); } }] : [],
+                    });
+                    if (bc.severity === 'critical' && store.settings().soundAlerts) {
+                        alertEngine._beep(200, 0.15, 0.5);
+                        setTimeout(() => alertEngine._beep(150, 0.15, 0.5), 300);
+                    }
+                    if (bc.type === 'rug_alert' && store.settings().flashTitle) {
+                        alertEngine._flash('🚨 RUG ALERT: ' + (bc.coin_symbol || 'CHECK FEED'));
+                    }
+                    if (window._reJLog) window._reJLog('info', bc.title, bc.message);
+                }
+                const seenArr = [...this._shown].slice(-50);
+                store.set('re:bc:seen', seenArr);
+                store.set('re:bc:last', this._lastSeen);
+            } catch {}
+        },
+        init() {
+            this.poll().catch(() => {});
+            setInterval(() => this.poll().catch(() => {}), 300000);
+        },
+    };
+
+    // Coin metadata cache — /v1/coins enriches risk scoring
+    const coinMetadataCache = {
+        _data: {},
+        _loaded: false,
+        _loadedAt: 0,
+        async load(force) {
+            if (this._loaded && !force && Date.now() - this._loadedAt < 120000) return this._data;
+            try {
+                const r = await api.get('/v1/coins');
+                if (r.status === 'success' && r.data) {
+                    this._data = r.data;
+                    this._loaded = true;
+                    this._loadedAt = Date.now();
+                }
+            } catch {}
+            return this._data;
+        },
+        get(symbol) { return this._data[symbol ? symbol.toUpperCase() : ''] || null; },
+        enrich(symbol, localRisk) {
+            const meta = this.get(symbol);
+            if (!meta) return localRisk;
+            const base = { ...localRisk, is_scam: meta.is_scam, is_verified: meta.is_verified, creator_trusted: meta.creator_trusted };
+            const extraFactors = [
+                ...(meta.flags && meta.flags.length ? meta.flags.map(f => 'Community flagged: ' + f) : []),
+                ...(meta.note ? ['Note: ' + meta.note] : []),
+            ];
+            if (meta.risk_override !== null && meta.risk_override !== undefined) {
+                return { ...base, risk: meta.risk_override, label: meta.risk_label || localRisk.label, factors: [...(localRisk.factors || []), ...extraFactors], _apiOverride: true };
+            }
+            return { ...base, factors: [...(localRisk.factors || []), ...extraFactors] };
+        },
+    };
+
+    // Gems cache — /v1/gems pre-loads verified community gems
+    const gemsCache = {
+        _gems: [],
+        _loadedAt: 0,
+        async load(force) {
+            if (this._gems.length && !force && Date.now() - this._loadedAt < 180000) return this._gems;
+            try {
+                const r = await api.get('/v1/gems');
+                if (r.status === 'success' && Array.isArray(r.data)) {
+                    this._gems = r.data;
+                    this._loadedAt = Date.now();
+                }
+            } catch {}
+            return this._gems;
+        },
+        symbols() { return new Set(this._gems.map(g => g.symbol)); },
+        get(symbol) { return this._gems.find(g => g.symbol === (symbol ? symbol.toUpperCase() : '')) || null; },
+    };
+
+    // Reputation cache — lazy loads per user from /v1/reputation/:username
+    const reputationCache = {
+        _cache: {},
+        async get(username) {
+            const u = username ? username.toLowerCase() : '';
+            if (!u) return null;
+            if (this._cache[u] && Date.now() - this._cache[u]._ts < 300000) return this._cache[u];
+            try {
+                const r = await api.get('/v1/reputation/' + encodeURIComponent(u));
+                if (r.status === 'success' && r.data) { this._cache[u] = { ...r.data, _ts: Date.now() }; return this._cache[u]; }
+            } catch {}
+            return null;
+        },
+        async bulk(usernames) {
+            if (!usernames || !usernames.length) return {};
+            try {
+                const r = await api.req('POST', '/v1/reputation/bulk', { usernames: usernames.slice(0, 20) });
+                if (r.status === 'success' && r.data) {
+                    for (const [u, rep] of Object.entries(r.data)) this._cache[u] = { ...rep, _ts: Date.now() };
+                    return r.data;
+                }
+            } catch {}
+            return {};
+        },
+    };
+
+    // Platform stats — shown in Status tab
+    const platformStats = {
+        _data: null,
+        _loadedAt: 0,
+        async load(force) {
+            if (this._data && !force && Date.now() - this._loadedAt < 60000) return this._data;
+            try {
+                const r = await api.get('/v1/stats/platform');
+                if (r.status === 'success' && r.data) { this._data = r.data; this._loadedAt = Date.now(); }
+            } catch {}
+            return this._data;
+        },
+    };
+
+    // Watchlist popularity reporter — anonymous, once per hour
+    const watchlistReporter = {
+        _lastReport: store.get('re:wlrep', 0),
+        async report() {
+            if (Date.now() - this._lastReport < 3600000) return;
+            const wl = store.get('re:wl', []);
+            if (!wl.length) return;
+            try {
+                await api.req('POST', '/v1/stats/watchlist', { symbols: wl.slice(0, 50) });
+                this._lastReport = Date.now();
+                store.set('re:wlrep', this._lastReport);
+            } catch {}
+        },
+    };
+
     const app = {
         w: new URLWatcher(),
         async init() {
@@ -4189,6 +4627,10 @@
                 setTimeout(() => { try { enhancedPanel.show(); } catch {} }, 700);
             }
             analytics.run().catch(() => {});
+            broadcastPoller.init();
+            coinMetadataCache.load().catch(() => {});
+            gemsCache.load().catch(() => {});
+            watchlistReporter.report().catch(() => {});
             setTimeout(() => updateChecker.check().catch(() => {}), 4000);
             setInterval(() => updateChecker.check().catch(() => {}), CONFIG.intervals.updateCheck);
             setInterval(() => reportPoller.poll().catch(() => {}), 120000);
